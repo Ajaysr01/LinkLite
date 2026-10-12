@@ -225,3 +225,59 @@ Rely exclusively on PostgreSQL's database-level `UNIQUE` constraint (`uq_links_c
   - Zero lock overhead or coordination complexity.
 - **Cons**:
   - Relies on database constraint failure signaling, which requires catching dialect-specific driver exceptions.
+
+---
+
+## ADR-009: Cache Stampede Mitigation via TTL Jitter & Link Expiry Capping
+
+### Status
+Accepted
+
+### Context
+When heavily requested short links (e.g. viral campaigns or breaking news links) expire simultaneously from Redis, hundreds or thousands of concurrent redirect requests can experience a cache miss at the exact same moment. This triggers a **cache stampede** (or thundering herd), swamping PostgreSQL with identical queries and causing severe latency spikes or pool exhaustion.
+
+### Decision
+1. **TTL Jitter**: Apply a random jitter ($\pm 5\%$) to the base TTL ($86{,}400\text{s}$). Keys populated around the same time expire at staggered intervals rather than in a synchronized burst.
+2. **Cap by Expiry**: If a link has an explicit `expires_at` timestamp, the cache TTL is capped to $\min(\text{jittered\_ttl}, \text{remaining\_lifetime})$. If the link has already expired, it is not cached.
+
+### Alternatives Considered
+1. **Distributed Mutex / Lock on Miss (e.g. Redis Redlock or single-flight)**:
+   - *Rejected*: A distributed lock forces concurrent cache-miss requests to block and wait for one worker to populate the cache. Under high load, managing lock acquisition, timeouts, and fallback adds significant latency and latency variance to reads.
+2. **Probabilistic Early Expiration (XFetch Algorithm)**:
+   - *Rejected*: More complex math ($-\beta \times \delta \times \ln(rand())$). For our workload, TTL jitter combined with Postgres read pool sizing provides effective mitigation with zero algorithmic complexity.
+
+### Trade-offs
+- **Pros**:
+  - Eliminates synchronized simultaneous cache expiration.
+  - Zero lock overhead or blocking on the read path.
+- **Cons**:
+  - Does not prevent a stampede on the very first read of a cold link (initial cache priming). For ultra-high-scale tiers, background pre-warming or single-flight loading is an option.
+
+---
+
+## ADR-010: Negative Caching for Unknown Codes (Preventing Cache Penetration)
+
+### Status
+Accepted
+
+### Context
+A common denial-of-service vector against shorteners is **cache penetration**: an attacker (or web crawler) queries millions of randomly generated or non-existent short codes (e.g. `/{unknown}`). Because these codes do not exist in Redis, every single request bypasses the cache and queries PostgreSQL, rapidly saturating database connections.
+
+### Decision
+Implement **Negative Caching**:
+1. When a code lookup misses in PostgreSQL, store `link_not_found:{code} = "1"` in Redis with a short TTL ($60\text{s}$).
+2. Subsequent requests for the same non-existent code hit Redis and return HTTP 404 in $<1\text{ms}$ without touching the database.
+3. When a user creates a link matching that alias, proactively delete `link_not_found:{code}` from Redis so the new link is immediately accessible.
+
+### Alternatives Considered
+1. **Bloom Filter / Cuckoo Filter**:
+   - *Rejected for Phase 3*: A Bloom filter in front of Redis can tell if a code definitely does not exist. However, Bloom filters do not support deletion easily (requiring Counting Bloom Filters or Cuckoo filters) and add maintenance overhead. Negative caching with a 60-second TTL solves the immediate DoS problem with standard Redis keys.
+
+### Trade-offs
+- **Pros**:
+  - Protects PostgreSQL connection pool from malicious 404 scanning attacks.
+  - Sub-millisecond response time for recurring 404 probes.
+- **Cons**:
+  - Potential cache pollution: An attacker requesting completely distinct random codes will write many 60s keys to Redis.
+  - *Mitigation*: Short 60s TTL ensures Redis memory is reclaimed quickly, and IP rate limiting (Phase 4) caps the rate of probe requests per client.
+

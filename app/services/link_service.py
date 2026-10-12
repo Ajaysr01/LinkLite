@@ -95,19 +95,45 @@ class LinkService:
 
     @staticmethod
     async def get_link_by_code(session: AsyncSession, code: str) -> Link | None:
-        """Retrieves a link by its unique code if not soft-deleted."""
+        """Retrieves an active link by its unique code (non-deleted)."""
         stmt = select(Link).where(Link.code == code, Link.is_deleted.is_(False))
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def get_link_raw(session: AsyncSession, code: str) -> Link | None:
+        """Retrieves a link row by code regardless of is_deleted or expiration."""
+        stmt = select(Link).where(Link.code == code)
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def soft_delete_link(
+        session: AsyncSession,
+        redis: aioredis.Redis,
+        code: str,
+    ) -> bool:
+        """Soft-deletes a link and immediately invalidates its cache entry.
+
+        Returns:
+            True if link was found and soft-deleted, False if already deleted or missing.
+        """
+        link = await LinkService.get_link_by_code(session, code)
+        if not link:
+            return False
+
+        link.is_deleted = True
+        await session.commit()
+
+        # Invalidate Redis cache immediately
+        from app.services.cache_service import CacheService
+
+        await CacheService.delete_link(redis, code)
+        return True
+
+    @staticmethod
     async def _evict_negative_cache(redis: aioredis.Redis, code: str) -> None:
         """Evicts negative cache key in Redis if present, failing open if Redis is down."""
-        try:
-            await redis.delete(f"link_not_found:{code}")
-        except Exception as exc:
-            logger.warning(
-                "Failed to evict negative cache in Redis (failing open)",
-                exc_info=exc,
-                extra={"extra_fields": {"code": code}},
-            )
+        from app.services.cache_service import CacheService
+
+        await CacheService.delete_link(redis, code)

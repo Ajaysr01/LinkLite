@@ -42,3 +42,51 @@ async def create_link(
         expires_at=link.expires_at,
         click_count=link.click_count,
     )
+
+
+@router.get(
+    "/{code}",
+    response_model=LinkResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get link details",
+    description="Returns metadata and total clicks for an active short link.",
+)
+async def get_link(
+    code: str,
+    db: AsyncSession = Depends(get_db),
+) -> LinkResponse:
+    link = await LinkService.get_link_by_code(session=db, code=code)
+    if not link:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Link not found",
+        )
+
+    short_url = f"{settings.BASE_URL.rstrip('/')}/{link.code}"
+    return LinkResponse(
+        code=link.code,
+        short_url=short_url,
+        long_url=link.long_url,
+        created_at=link.created_at,
+        expires_at=link.expires_at,
+        click_count=link.click_count,
+    )
+
+
+@router.delete(
+    "/{code}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete short link",
+    description="Soft-deletes a short link and immediately evicts its cache entries.",
+)
+async def delete_link(
+    code: str,
+    db: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis_client),
+) -> None:
+    deleted = await LinkService.soft_delete_link(session=db, redis=redis, code=code)
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Link not found",
+        )
