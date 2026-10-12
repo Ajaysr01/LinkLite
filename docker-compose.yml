@@ -1,0 +1,77 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: linklite-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: linklite
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d linklite"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - linklite-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: linklite-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - linklite-network
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: linklite-api
+    restart: unless-stopped
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=false
+      - BASE_URL=http://localhost:8000
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=linklite
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/linklite
+      - REDIS_URL=redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - linklite-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  linklite-network:
+    driver: bridge

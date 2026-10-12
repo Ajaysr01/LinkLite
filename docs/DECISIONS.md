@@ -116,3 +116,56 @@ When a link is soft-deleted:
 - **Cons**:
   - Table size accumulates inactive rows over time.
   - *Mitigation*: Partial indexes (`WHERE is_deleted = FALSE`) ensure queries on active links ignore deleted rows entirely.
+
+---
+
+## ADR-005: SQLAlchemy 2.0 Async Engine with asyncpg over Synchronous Drivers
+
+### Status
+Accepted
+
+### Context
+FastAPI runs on an asynchronous ASGI event loop (`uvloop` or `asyncio`). Using a synchronous database driver like `psycopg2` inside async request handlers blocks the event loop thread during I/O operations, stalling all concurrent requests and dramatically reducing throughput.
+
+### Decision
+Use **SQLAlchemy 2.0** with the **asyncpg** asynchronous database driver and `async_sessionmaker`. All database operations use `await session.execute(...)` or `await session.commit()`.
+
+### Alternatives Considered
+1. **Synchronous SQLAlchemy with Thread Pooling (`run_in_threadpool` / `def` endpoints)**:
+   - *Rejected*: Thread context switching introduces substantial overhead under high QPS, and Python thread pools have limited concurrency compared to native async event loops.
+2. **Tortoise ORM / Databases / Raw asyncpg**:
+   - *Rejected*: Raw `asyncpg` lacks schema migration integration (Alembic) and relationship management. Tortoise ORM has a smaller ecosystem and weaker enterprise adoption than SQLAlchemy.
+
+### Trade-offs
+- **Pros**:
+  - Non-blocking I/O across all database calls, enabling thousands of concurrent connections on low memory.
+  - Direct integration with Alembic for automated migrations.
+  - Native type safety with SQLAlchemy 2.0 `Mapped[...]` attributes.
+- **Cons**:
+  - Requires care with ORM relationship loading (avoiding implicit lazy loading, using `selectin` or explicit joins).
+
+---
+
+## ADR-006: ContextVar-based Distributed Tracing (`X-Request-ID`)
+
+### Status
+Accepted
+
+### Context
+In an asynchronous concurrent environment, requests interleave across tasks on the same OS thread. Debugging errors without request correlation IDs makes diagnosing issues in logs virtually impossible.
+
+### Decision
+Implement ASGI middleware that extracts or generates a unique `X-Request-ID` UUID for every HTTP request, stores it in a Python `contextvars.ContextVar`, injects it into all JSON log lines via a custom `logging.Formatter`, and echoes it in the response header.
+
+### Alternatives Considered
+1. **Passing `request_id` explicitly through every function call**:
+   - *Rejected*: Creates severe code pollution and boilerplate across services and repository layers.
+2. **`threading.local`**:
+   - *Rejected*: Fails in asynchronous Python because multiple concurrent coroutines execute cooperatively on the same OS thread.
+
+### Trade-offs
+- **Pros**:
+  - Zero pollution of business logic signatures.
+  - End-to-end request tracing in production logs and client responses.
+- **Cons**:
+  - Negligible contextvar lookup overhead during log emission.

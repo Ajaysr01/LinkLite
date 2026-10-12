@@ -1,0 +1,1 @@
+"""LinkLite URL shortener application."""
