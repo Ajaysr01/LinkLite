@@ -281,3 +281,63 @@ Implement **Negative Caching**:
   - Potential cache pollution: An attacker requesting completely distinct random codes will write many 60s keys to Redis.
   - *Mitigation*: Short 60s TTL ensures Redis memory is reclaimed quickly, and IP rate limiting (Phase 4) caps the rate of probe requests per client.
 
+---
+
+## ADR-011: Sliding Window Rate Limiting via Atomic Redis Lua Script
+
+### Status
+Accepted
+
+### Context
+LinkLite must protect against abuse, bot scraping, and denial-of-service traffic without introducing race conditions or false blocks under bursty traffic.
+
+### Decision
+Implement a **Sliding Window Log** algorithm backed by Redis Sorted Sets and executed atomically inside a **Redis Lua script**.
+1. The Lua script removes entries older than the current window (`ZREMRANGEBYSCORE key 0 (now - window)`).
+2. It counts existing requests in the window (`ZCARD key`).
+3. If count < limit, it atomically appends the current request (`ZADD key now member`), refreshes the key expiration, and permits the request.
+4. If count >= limit, it calculates `Retry-After` using the oldest entry score in the sorted set and rejects with HTTP 429.
+5. All operations run atomically on the Redis single-threaded engine, preventing Time-Of-Check to Time-Of-Use race conditions.
+
+### Alternatives Considered
+1. **Fixed Window Counter (`INCR` + `EXPIRE`)**:
+   - *Rejected*: Suffers from the boundary burst problem (a client can send 100% of quota at the end of window 1 and another 100% at the start of window 2, allowing 2x the allowed rate in a fraction of a second).
+2. **Token Bucket**:
+   - *Rejected*: While memory-efficient, token bucket requires tracking floating point tokens and timestamps. Sliding window log gives precise sub-second window sliding accuracy and predictable `Retry-After` calculation.
+3. **Multi-command Python implementation without Lua (e.g. GET then INCR)**:
+   - *Rejected*: In an async server handling concurrent requests from the same IP, two requests executing simultaneously could both read `count = 9` (with limit 10), and both proceed, exceeding the quota. Lua scripts are executed atomically in Redis.
+
+### Trade-offs
+- **Pros**:
+  - 100% race-condition free under high concurrency.
+  - Smooth sliding window behavior with no boundary spikes.
+  - Provides precise `Retry-After` and `X-RateLimit-*` telemetry headers.
+- **Cons**:
+  - Sorted sets use slightly more memory than simple integer keys ($O(N)$ elements per active user IP in the window).
+  - *Mitigation*: Short window durations (60s) and automatic TTL expiration clean up inactive IP keys rapidly.
+
+---
+
+## ADR-012: Client IP Resolution and Proxy Header Spoofing Protection
+
+### Status
+Accepted
+
+### Context
+Rate limiters track requests per client IP. In internet-facing services, clients can send arbitrary HTTP request headers, including `X-Forwarded-For`.
+
+### Decision
+Extract the client IP from the direct TCP socket connection (`request.client.host`) by default. Honor the `X-Forwarded-For` header **only when `TRUST_PROXY_HEADERS=True`** is explicitly configured in environment settings.
+
+### Alternatives Considered
+1. **Unconditionally trusting `X-Forwarded-For`**:
+   - *Rejected*: Catastrophic security vulnerability. A client can send random values (`X-Forwarded-For: 1.1.1.1`, then `1.1.1.2`, etc.) on every request, completely evading IP-based rate limiting.
+
+### Trade-offs
+- **Pros**:
+  - Prevents rate limit bypass and spoofing attacks when deployed directly.
+  - Retains compatibility with trusted upstream reverse proxies (e.g. AWS ALB, Cloudflare, Nginx) via a config flag.
+- **Cons**:
+  - Requires operators behind a reverse proxy to explicitly set `TRUST_PROXY_HEADERS=True`.
+
+

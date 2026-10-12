@@ -5,16 +5,26 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
+from app.core.rate_limiter import RateLimiter
 from app.db.session import get_db, get_redis_client
 from app.services.cache_service import CacheService
 from app.services.link_service import LinkService
 
 router = APIRouter(tags=["Redirect"])
+settings = get_settings()
+
+redirect_limiter = RateLimiter(
+    limit_per_window=settings.RATE_LIMIT_REDIRECT_PER_MINUTE,
+    window_seconds=60,
+    scope="redirect",
+)
 
 
 @router.get(
     "/{code}",
     status_code=status.HTTP_302_FOUND,
+    dependencies=[Depends(redirect_limiter)],
     summary="Redirect to target URL",
     description=(
         "Redirects a short code to its destination URL via HTTP 302 Found. "

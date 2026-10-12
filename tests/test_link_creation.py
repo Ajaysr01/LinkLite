@@ -68,31 +68,37 @@ async def test_create_link_alias_conflict_409():
 
 @pytest.mark.asyncio
 async def test_concurrent_alias_creation():
-    """Verify concurrency correctness: 20 simultaneous requests for the same alias
+    """Verify concurrency correctness: 50 simultaneous requests for the same alias
 
-    must yield exactly one 201 and 19 409 conflicts.
+    must yield exactly one 201 and 49 409 conflicts under parallel DB load.
     """
+    from app.api.links import create_link_limiter
+
     alias = "high-concurrency-alias"
+    app.dependency_overrides[create_link_limiter] = lambda: None
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
 
-        async def make_request(idx: int):
-            return await ac.post(
-                "/api/links",
-                json={
-                    "long_url": f"https://example.com/item/{idx}",
-                    "custom_alias": alias,
-                },
-            )
+            async def make_request(idx: int):
+                return await ac.post(
+                    "/api/links",
+                    json={
+                        "long_url": f"https://example.com/item/{idx}",
+                        "custom_alias": alias,
+                    },
+                )
 
-        responses = await asyncio.gather(*(make_request(i) for i in range(20)))
+            responses = await asyncio.gather(*(make_request(i) for i in range(50)))
 
-        statuses = [r.status_code for r in responses]
-        success_count = statuses.count(201)
-        conflict_count = statuses.count(409)
+            statuses = [r.status_code for r in responses]
+            success_count = statuses.count(201)
+            conflict_count = statuses.count(409)
 
-        assert success_count == 1, f"Expected exactly 1 success, got {success_count}"
-        assert conflict_count == 19, f"Expected 19 conflicts, got {conflict_count}"
+            assert success_count == 1, f"Expected exactly 1 success, got {success_count}"
+            assert conflict_count == 49, f"Expected 49 conflicts, got {conflict_count}"
+    finally:
+        app.dependency_overrides.pop(create_link_limiter, None)
 
 
 @pytest.mark.parametrize(

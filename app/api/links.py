@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.core.rate_limiter import RateLimiter
 from app.db.session import get_db, get_redis_client
 from app.schemas.link import LinkCreateRequest, LinkResponse
 from app.services.link_service import AliasAlreadyExistsError, LinkService
@@ -10,11 +11,18 @@ from app.services.link_service import AliasAlreadyExistsError, LinkService
 router = APIRouter(prefix="/api/links", tags=["Links"])
 settings = get_settings()
 
+create_link_limiter = RateLimiter(
+    limit_per_window=settings.RATE_LIMIT_CREATE_PER_MINUTE,
+    window_seconds=60,
+    scope="create",
+)
+
 
 @router.post(
     "",
     response_model=LinkResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(create_link_limiter)],
     summary="Create a short link",
     description=(
         "Shortens a destination URL, supporting optional custom alias and expiration timestamp."
