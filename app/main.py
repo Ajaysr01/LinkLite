@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
-from app.api.health import router as health_router
+from app.api import health_router, links_router
 from app.core.config import get_settings
 from app.core.logging import logger, request_id_ctx, setup_logging
 from app.db.session import close_redis_client
@@ -96,3 +96,4 @@ app.add_middleware(RequestContextMiddleware)
 
 # Include Routers
 app.include_router(health_router)
+app.include_router(links_router)

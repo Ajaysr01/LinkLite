@@ -169,3 +169,59 @@ Implement ASGI middleware that extracts or generates a unique `X-Request-ID` UUI
   - End-to-end request tracing in production logs and client responses.
 - **Cons**:
   - Negligible contextvar lookup overhead during log emission.
+
+---
+
+## ADR-007: Short Code Capacity and Enumeration Mitigations
+
+### Status
+Accepted
+
+### Context
+LinkLite generates short codes from an integer sequence. We need to analyze capacity limits, predictability, and enumeration attack trade-offs.
+
+### Capacity Arithmetic
+- Base62 alphabet size $B = 62$.
+- $N$-character string capacity = $62^N$.
+  - 1 character: $62^1 = 62$
+  - 2 characters: $62^2 = 3{,}844$
+  - 3 characters: $62^3 = 238{,}328$
+  - 4 characters: $62^4 = 14{,}776{,}336$
+  - 5 characters: $62^5 = 916{,}132{,}832$
+  - 6 characters: $62^6 = 56{,}800{,}235{,}584$ ($\approx 56.8\text{ billion}$)
+  - 7 characters: $62^7 = 3{,}521{,}614{,}606{,}208$ ($\approx 3.52\text{ trillion}$)
+- By adding offset $62^5 = 916{,}132{,}832$, generated codes start at 6 characters (`100000`) and can represent up to $55.8\text{ billion}$ links before expanding to 7 characters.
+
+### Enumeration Trade-off & Mitigations
+- **Trade-off**: A strictly sequential ID enables enumeration scraping (incrementing short codes to crawl competitor links).
+- **Why Accepted**:
+  - Simplicity and zero collisions under high concurrency.
+  - No random collision retry loops which degrade $O(k)$ under high table volume.
+- **Production Mitigations for Higher Scale**:
+  - Pass the integer ID through a reversible pseudo-random permutation (e.g. Skip32 Feistel cipher) before Base62 encoding to produce unpredictable but strictly collision-free strings.
+
+---
+
+## ADR-008: Concurrency Control via Database UNIQUE Constraints vs. Check-then-Insert
+
+### Status
+Accepted
+
+### Context
+When two concurrent requests attempt to register the exact same `custom_alias` simultaneously, the system must guarantee that exactly one succeeds (`201 Created`) and the other fails (`409 Conflict`).
+
+### Decision
+Rely exclusively on PostgreSQL's database-level `UNIQUE` constraint (`uq_links_code`) and transactional ACID guarantees. Catch the resulting `IntegrityError` (PostgreSQL error code `23505 unique_violation`) in the service layer and translate it into HTTP 409 Conflict.
+
+### Alternatives Considered
+1. **Check-then-Insert (`SELECT` then `INSERT`)**:
+   - *Rejected*: Subject to Time-Of-Check to Time-Of-Use (TOCTOU) race conditions. If request A and request B both execute `SELECT` before either commits `INSERT`, both observe that the alias is free and both attempt insertion, leading to unhandled 500 errors or duplicate records if unconstrained.
+2. **Distributed Redis Locks (`SET NX EX`)**:
+   - *Rejected*: Adds network round trips and lock acquisition overhead to the hot write path. Redis locks can also expire prematurely during long GC pauses or network delays, failing to guarantee safety. The database is the ultimate source of truth.
+
+### Trade-offs
+- **Pros**:
+  - Provably race-condition free under any level of concurrency.
+  - Zero lock overhead or coordination complexity.
+- **Cons**:
+  - Relies on database constraint failure signaling, which requires catching dialect-specific driver exceptions.
