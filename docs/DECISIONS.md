@@ -340,4 +340,68 @@ Extract the client IP from the direct TCP socket connection (`request.client.hos
 - **Cons**:
   - Requires operators behind a reverse proxy to explicitly set `TRUST_PROXY_HEADERS=True`.
 
+---
+
+## ADR-013: Write-Decoupled Click Analytics Ingestion & Eventual Consistency
+
+### Status
+Accepted
+
+### Context
+Link redirection is the primary hot path of LinkLite, handling potentially tens of thousands of requests per second. Synchronously writing to PostgreSQL or updating a row counter on every redirect would introduce disk I/O bottlenecks, table locks, and row-level contention on popular links, severely degrading redirect performance.
+
+### Decision
+Decouple click analytics ingestion from persistent storage using an in-memory Redis write buffer and an asynchronous background worker:
+1. **Hot Path Ingestion**: During redirect (`GET /{code}`), the server issues an atomic Redis pipeline increment: `INCR click_buffer:{code}:{YYYY-MM-DD}` with a 48-hour TTL. Zero database queries or row locks occur on the redirect hot path.
+2. **Periodic Batch Flushing**: A background task periodically (every 10 seconds) harvests counts using atomic Redis `GETSET key 0` (preventing lost increments during collection).
+3. **PostgreSQL Batch Upsert**: Harvested counts are persisted within a single ACID transaction using `INSERT INTO click_stats ... ON CONFLICT (code, date) DO UPDATE SET count = click_stats.count + EXCLUDED.count` and incrementing `links.click_count`.
+4. **Crash-Safe Rollback**: If the database transaction fails (e.g. intermittent DB disconnect), harvested counts are immediately rolled back into Redis via `INCRBY key count`, ensuring zero click counts are lost.
+5. **Read Real-Time Consistency**: Stats query endpoints (`GET /api/links/{code}/stats` and `GET /api/links/{code}`) calculate live metrics by summing committed PostgreSQL historical data with any active in-memory Redis buffer for today.
+
+### Alternatives Considered
+1. **Synchronous PostgreSQL `UPDATE links SET click_count = click_count + 1`**:
+   - *Rejected*: Causes catastrophic row lock contention. If a viral link receives 10,000 clicks/sec, 10,000 transactions serialize waiting on the exact same row lock, crashing database throughput.
+2. **Distributed Message Queue (Kafka / RabbitMQ / AWS SQS)**:
+   - *Rejected*: Massive architectural overhead and operational complexity for a single-service URL shortener. Redis buffer provides sufficient throughput ($>100\text{k ops/sec}$) without additional cluster infrastructure.
+3. **Redis Streams / PubSub**:
+   - *Rejected*: Streaming individual click event objects consumes significantly more memory ($O(N)$ events) compared to aggregating counter increments ($O(1)$ integer per active link per day).
+
+### Trade-offs
+- **Pros**:
+  - Sub-2ms redirect response times; PostgreSQL is completely isolated from redirect write traffic.
+  - Zero lost clicks under high concurrency due to atomic `GETSET` and `INCRBY` rollback on failure.
+  - Real-time accuracy on stats endpoints by dynamically bridging database history and live Redis buffers.
+- **Cons**:
+  - Eventual consistency window: If the Redis host suffers a catastrophic ungraceful hard power failure before a 10-second flush, counts buffered during that brief window could be lost. This is an industry-standard acceptable trade-off for analytics telemetry (distinct from financial transactional ledgers).
+
+---
+
+## ADR-014: Zero-Trust Frontend DOM Manipulation & XSS Prevention
+
+### Status
+Accepted
+
+### Context
+Phase 5b adds a minimal single-page web dashboard for creating short links and visualizing analytics. The application displays user-controlled data (destination URLs, custom aliases, error messages). Inserting untrusted user input into the browser DOM creates dangerous Cross-Site Scripting (XSS) vectors.
+
+### Decision
+Enforce zero-trust client DOM manipulation:
+1. All dynamic strings returned from the API or typed by the user are injected into the DOM exclusively via `element.textContent` or direct validated properties (e.g., `element.href`).
+2. The use of `element.innerHTML = ...` is strictly prohibited for any user or API-supplied string.
+3. Backend Pydantic validators strictly permit only `http` and `https` schemes, rejecting dangerous URI schemes such as `javascript:`, `data:`, or `vbscript:`.
+4. External scripts (Chart.js) are pinned to an exact immutable version from CDN with integrity guarantees.
+
+### Alternatives Considered
+1. **Third-party HTML Sanitization Library (DOMPurify)**:
+   - *Rejected*: LinkLite requires zero frontend build steps and no heavy dependencies. The dashboard display is entirely textual and structured; native browser `.textContent` handles character escaping natively in browser C++ code with zero bundle overhead.
+
+### Trade-offs
+- **Pros**:
+  - 100% immune to DOM-based XSS attacks.
+  - Zero build step, zero JavaScript dependencies (other than pinned Chart.js).
+  - Lightweight, performant, and easy for any engineer to audit and maintain.
+- **Cons**:
+  - Cannot render rich Markdown or arbitrary HTML tags in user link descriptions (not a requirement for a URL shortener).
+
+
 

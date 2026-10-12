@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.rate_limiter import RateLimiter
 from app.db.session import get_db, get_redis_client
+from app.services.analytics_service import AnalyticsService
 from app.services.cache_service import CacheService
 from app.services.link_service import LinkService
 
@@ -53,6 +54,7 @@ async def redirect_link(
                     detail="Link has expired",
                 )
 
+        await AnalyticsService.record_click(redis, code)
         return RedirectResponse(
             url=cached["long_url"],
             status_code=status.HTTP_302_FOUND,
@@ -83,8 +85,9 @@ async def redirect_link(
             detail="Link has expired",
         )
 
-    # Active link: Populate Redis cache and redirect
+    # Active link: Populate Redis cache, record click, and redirect
     await CacheService.set_link(redis, code, link.long_url, link.expires_at)
+    await AnalyticsService.record_click(redis, code)
     return RedirectResponse(
         url=link.long_url,
         status_code=status.HTTP_302_FOUND,

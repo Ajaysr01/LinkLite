@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -5,7 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.rate_limiter import RateLimiter
 from app.db.session import get_db, get_redis_client
-from app.schemas.link import LinkCreateRequest, LinkResponse
+from app.schemas.link import LinkCreateRequest, LinkResponse, LinkStatsResponse
+from app.services.analytics_service import AnalyticsService
 from app.services.link_service import AliasAlreadyExistsError, LinkService
 
 router = APIRouter(prefix="/api/links", tags=["Links"])
@@ -62,6 +65,7 @@ async def create_link(
 async def get_link(
     code: str,
     db: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis_client),
 ) -> LinkResponse:
     link = await LinkService.get_link_by_code(session=db, code=code)
     if not link:
@@ -70,6 +74,16 @@ async def get_link(
             detail="Link not found",
         )
 
+    # Combine DB click count with un-flushed Redis buffer
+    unflushed = 0
+    try:
+        today_str = datetime.now(UTC).strftime("%Y-%m-%d")
+        val = await redis.get(f"click_buffer:{code}:{today_str}")
+        if val:
+            unflushed = int(val)
+    except Exception:
+        pass
+
     short_url = f"{settings.BASE_URL.rstrip('/')}/{link.code}"
     return LinkResponse(
         code=link.code,
@@ -77,8 +91,29 @@ async def get_link(
         long_url=link.long_url,
         created_at=link.created_at,
         expires_at=link.expires_at,
-        click_count=link.click_count,
+        click_count=link.click_count + unflushed,
     )
+
+
+@router.get(
+    "/{code}/stats",
+    response_model=LinkStatsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get 30-day link click statistics",
+    description="Returns total clicks and daily click breakdown for the past 30 days.",
+)
+async def get_link_stats(
+    code: str,
+    db: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis_client),
+) -> LinkStatsResponse:
+    stats = await AnalyticsService.get_link_stats(session=db, redis=redis, code=code, days=30)
+    if not stats:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Link not found",
+        )
+    return LinkStatsResponse(**stats)
 
 
 @router.delete(

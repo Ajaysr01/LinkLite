@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LinkLite - Fast, Scalable URL Shortener</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <!-- Pinned exact version of Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1><span class="logo-highlight">Link</span>Lite</h1>
+            <p>Production-grade URL shortening with Redis caching, rate limiting, and analytics.</p>
+        </header>
+
+        <!-- Section 1: Create Short Link -->
+        <section class="card">
+            <h2 class="card-title">Shorten a URL</h2>
+            <form id="create-form">
+                <div class="form-group">
+                    <label for="long-url">Destination URL *</label>
+                    <input type="url" id="long-url" name="long_url" placeholder="https://example.com/very/long/destination/url" required autocomplete="off">
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="custom-alias">Custom Alias (Optional)</label>
+                        <input type="text" id="custom-alias" name="custom_alias" placeholder="e.g. launch2026 (3-32 chars)" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label for="expires-at">Expiration Date & Time (Optional)</label>
+                        <input type="datetime-local" id="expires-at" name="expires_at">
+                    </div>
+                </div>
+
+                <button type="submit" id="create-submit-btn" class="btn">
+                    Shorten Link
+                </button>
+            </form>
+
+            <div id="create-error-alert" class="alert alert-error"></div>
+
+            <div id="create-result-box" class="result-box">
+                <div class="result-row">
+                    <div>
+                        <span style="font-size: 0.8rem; color: var(--text-secondary); text-transform: uppercase;">Short URL:</span><br>
+                        <a id="short-url-link" class="short-url-link" href="#" target="_blank" rel="noopener noreferrer"></a>
+                    </div>
+                    <button type="button" id="copy-btn" class="btn btn-secondary">
+                        Copy
+                    </button>
+                </div>
+                <div class="result-meta">
+                    <div><strong>Original Destination:</strong> <span id="result-long-url"></span></div>
+                    <div id="result-expires-wrapper" style="display: none;"><strong>Expires:</strong> <span id="result-expires-at"></span></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Section 2: Link Analytics Dashboard -->
+        <section class="card">
+            <h2 class="card-title">Link Analytics</h2>
+            <form id="stats-form">
+                <div class="stats-search-row">
+                    <input type="text" id="stats-code" placeholder="Enter short code or custom alias (e.g. X9aK2b)" required autocomplete="off">
+                    <button type="submit" id="stats-submit-btn" class="btn">
+                        View Stats
+                    </button>
+                </div>
+            </form>
+
+            <div id="stats-error-alert" class="alert alert-error"></div>
+
+            <div id="stats-details" class="stats-details">
+                <div class="metric-cards">
+                    <div class="metric-card">
+                        <div class="metric-label">Total Clicks</div>
+                        <div id="metric-total-clicks" class="metric-value">0</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Code / Alias</div>
+                        <div id="metric-code" class="metric-value" style="font-size: 1.25rem;">-</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Created At</div>
+                        <div id="metric-created-at" class="metric-value" style="font-size: 0.95rem; font-weight: normal; color: var(--text-secondary);">-</div>
+                    </div>
+                </div>
+
+                <div class="metric-card" style="margin-bottom: 1.5rem;">
+                    <div class="metric-label">Target Destination</div>
+                    <div id="metric-long-url" style="word-break: break-all; margin-top: 0.35rem; color: #93c5fd;">-</div>
+                </div>
+
+                <h3 style="font-size: 1rem; color: var(--text-secondary); margin-bottom: 0.5rem;">30-Day Click Performance</h3>
+                <div class="chart-container">
+                    <canvas id="clicksChart"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <footer>
+            LinkLite &copy; 2026 &bull; Production URL Shortener &bull;
+            <a href="/docs" target="_blank">Swagger OpenAPI Docs</a>
+        </footer>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

@@ -2,15 +2,19 @@ import time
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 from app.api import health_router, links_router, redirect_router
 from app.core.config import get_settings
 from app.core.logging import logger, request_id_ctx, setup_logging
-from app.db.session import close_redis_client
+from app.db.session import AsyncSessionLocal, close_redis_client
+from app.services.analytics_service import start_analytics_worker, stop_analytics_worker
 
 settings = get_settings()
 
@@ -23,8 +27,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         "Starting LinkLite application",
         extra={"extra_fields": {"environment": settings.ENVIRONMENT}},
     )
+    # Start periodic background flush of Redis click counters to PostgreSQL
+    start_analytics_worker(
+        session_factory=AsyncSessionLocal,
+        interval_seconds=settings.ANALYTICS_FLUSH_INTERVAL_SECONDS,
+    )
     yield
     logger.info("Shutting down LinkLite application, closing connections...")
+    await stop_analytics_worker()
     await close_redis_client()
 
 
@@ -93,6 +103,17 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(RequestContextMiddleware)
+
+STATIC_DIR = Path(__file__).parent / "static"
+
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.get("/", include_in_schema=False)
+async def serve_index() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
+
 
 # Include Routers
 app.include_router(health_router)

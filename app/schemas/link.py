@@ -109,3 +109,14 @@ class LinkResponse(BaseModel):
     created_at: datetime
     expires_at: datetime | None = None
     click_count: int = 0
+
+
+class DailyClickStat(BaseModel):
+    date: str
+    clicks: int
+
+
+class LinkStatsResponse(BaseModel):
+    code: str
+    total_clicks: int
+    daily_clicks: list[DailyClickStat]
