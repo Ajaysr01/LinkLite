@@ -16,7 +16,7 @@
 
 ```mermaid
 flowchart TD
-    Client(["🌐 Client / Browser"])
+    Client(["Client / Browser"])
 
     subgraph AppService ["FastAPI Application (Async ASGI)"]
         RateLimit["Rate Limiter (Sliding Window Log via Lua)"]
@@ -27,8 +27,8 @@ flowchart TD
     end
 
     subgraph StorageTier ["Storage & Caching Tier"]
-        Redis[("⚡ Redis 7\n- Link Cache (TTL)\n- Negative Cache (60s)\n- Rate Limit ZSets\n- Click Buffers")]
-        Postgres[("🐘 PostgreSQL 16\n- links Table (Unique Code)\n- click_stats Table (Code, Date)\n- Sequence Offset (62^5)")]
+        Redis[("Redis 7\n- Link Cache (TTL)\n- Negative Cache (60s)\n- Rate Limit ZSets\n- Click Buffers")]
+        Postgres[("PostgreSQL 16\n- links Table (Unique Code)\n- click_stats Table (Code, Date)\n- Sequence Offset (62^5)")]
     end
 
     Client -->|"HTTP Requests"| RateLimit
