@@ -1,6 +1,6 @@
 /**
  * LinkLite Minimal Frontend & Analytics Dashboard
- * 
+ *
  * Security Note (XSS Prevention):
  * All dynamic content from user input and API responses is inserted into the
  * DOM strictly using `.textContent` or element property assignments (e.g. .href).

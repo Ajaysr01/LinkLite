@@ -46,12 +46,12 @@ async def test_concurrency_50_parallel_creates_same_alias():
             success_count = statuses.count(201)
             conflict_count = statuses.count(409)
 
-            assert success_count == 1, (
-                f"Expected exactly 1 success (201), but got {success_count}. Statuses: {statuses}"
-            )
-            assert conflict_count == 49, (
-                f"Expected exactly 49 conflicts (409), but got {conflict_count}"
-            )
+            assert (
+                success_count == 1
+            ), f"Expected exactly 1 success (201), but got {success_count}. Statuses: {statuses}"
+            assert (
+                conflict_count == 49
+            ), f"Expected exactly 49 conflicts (409), but got {conflict_count}"
 
             # Verify in PostgreSQL that exactly one link exists with this alias
             async with AsyncSessionLocal() as session:
@@ -91,9 +91,9 @@ async def test_concurrency_100_parallel_redirects_accurate_counter():
 
             responses = await asyncio.gather(*(send_redirect() for _ in range(100)))
 
-            assert all(r.status_code == 302 for r in responses), (
-                "All 100 redirect requests should return 302 Found"
-            )
+            assert all(
+                r.status_code == 302 for r in responses
+            ), "All 100 redirect requests should return 302 Found"
 
             # 3. Harvest and flush from Redis to PostgreSQL
             redis = get_redis_client()
@@ -104,9 +104,9 @@ async def test_concurrency_100_parallel_redirects_accurate_counter():
             async with AsyncSessionLocal() as session:
                 link_res = await session.execute(select(Link).where(Link.code == code))
                 link = link_res.scalar_one()
-                assert link.click_count == 100, (
-                    f"Expected link.click_count to be 100, got {link.click_count}"
-                )
+                assert (
+                    link.click_count == 100
+                ), f"Expected link.click_count to be 100, got {link.click_count}"
 
                 stat_res = await session.execute(select(ClickStat).where(ClickStat.code == code))
                 stat = stat_res.scalar_one()
@@ -144,6 +144,6 @@ async def test_concurrency_rate_limiter_allows_exact_configured_quota():
         blocked = statuses.count(429)
 
         assert allowed == quota, f"Expected exactly {quota} requests allowed, but got {allowed}"
-        assert blocked == 40 - quota, (
-            f"Expected {40 - quota} requests blocked with 429, but got {blocked}"
-        )
+        assert (
+            blocked == 40 - quota
+        ), f"Expected {40 - quota} requests blocked with 429, but got {blocked}"

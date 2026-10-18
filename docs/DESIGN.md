@@ -338,7 +338,7 @@ sequenceDiagram
 
     Client->>API: POST /api/links {long_url, custom_alias?, expires_at?}
     API->>API: Validate URL (scheme, length, loop prevention)
-    
+
     alt Custom Alias Provided
         API->>DB: INSERT INTO links (code, long_url, expires_at) VALUES (custom_alias, ...)
         alt Unique Constraint Violation (Error 23505)

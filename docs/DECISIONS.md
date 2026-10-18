@@ -433,6 +433,64 @@ Implement end-to-end automated concurrency tests using in-process asynchronous t
 - **Cons**:
   - Requires active PostgreSQL and Redis instances (handled seamlessly by Docker compose or GitHub Actions service containers).
 
+---
 
+## ADR-016: Multi-Stage Production Containerization with Non-Root Security and Built-in Health Checks
 
+### Status
+Accepted
 
+### Context
+Deploying LinkLite in containerized production environments (Kubernetes, Fly.io, Render, AWS ECS) requires small image footprint, minimal CVE attack surface, non-root execution privileges, and proactive container health reporting.
+
+### Decision
+Implement a multi-stage Dockerfile based on `python:3.11-slim`:
+1. **Multi-Stage Build**: A `builder` stage installs build dependencies (`gcc`, `libpq-dev`), compiles Python wheels, and installs them into `/install`. The `runtime` stage copies only the built artifacts, completely excluding compilers and header files.
+2. **Non-Root Execution**: Creates a dedicated system user and group (`appuser` with UID/GID `10001`) with no shell access. Files are owned by `appuser:appgroup` and the container runs under `USER appuser`.
+3. **Container Healthcheck**: Configures a native `HEALTHCHECK` directive probing `curl -f http://localhost:8000/health || exit 1` every 15s with a 10s start period.
+4. **Minimal Runtime Footprint**: Yields a content size of only ~78.5 MB, speeding up cold starts and container registry pulls.
+
+### Alternatives Considered
+1. **Single-Stage Dockerfile**:
+   - *Rejected*: Keeps `build-essential` and development libraries inside the final image, swelling image size past 500 MB and leaving unnecessary toolchains available to potential attackers.
+2. **Alpine Linux Base (`python:3.11-alpine`)**:
+   - *Rejected*: Alpine relies on `musl libc` instead of GNU `glibc`. Precompiled Python wheels for C-extensions (`asyncpg`, `pydantic-core`) frequently require slow compilation from source on Alpine and occasionally suffer performance degradations or memory fragmentation issues under high concurrency. Debian `slim` offers full `glibc` binary wheel compatibility at negligible size difference.
+3. **Running as Root (`USER root`)**:
+   - *Rejected*: Critical security vulnerability. If a remote code execution vulnerability were ever discovered, a root process inside the container significantly lowers the bar for container escape to the host kernel.
+
+### Trade-offs
+- **Pros**:
+  - Secure least-privilege container execution.
+  - Tiny ~78.5 MB compressed footprint.
+  - Built-in container liveness monitoring compatible with Docker and container orchestrators.
+- **Cons**:
+  - Multi-stage builds take a few seconds longer on initial cold builds without layer caching.
+
+---
+
+## ADR-017: Multi-Job CI Pipeline with Automated Service Containers and Quality Gates
+
+### Status
+Accepted
+
+### Context
+Code pushed to `main` must pass rigorous quality gates before merging: syntax checks, formatting standards, database migrations, end-to-end unit and concurrency test execution, and production Docker container build validation.
+
+### Decision
+Implement a GitHub Actions workflow (`.github/workflows/ci.yml`) structured into three sequential jobs:
+1. **Job 1: Lint & Format**: Fast feedback loop running `ruff check .` and `ruff format --check .`.
+2. **Job 2: Automated Tests & Coverage**: Spins up real `postgres:16-alpine` and `redis:7-alpine` service containers inside GitHub Actions runner network, executes Alembic migrations (`alembic upgrade head`), and runs pytest with a mandatory coverage gate: `pytest --cov=app --cov-fail-under=80`.
+3. **Job 3: Production Docker Build**: Builds the production Dockerfile to ensure that container builds never break undetected.
+
+### Alternatives Considered
+1. **Single Combined Job**:
+   - *Rejected*: If code has a simple formatting error, waiting for PostgreSQL and Redis to start up and dependencies to install wastes runner minutes and delays developer feedback.
+2. **Omitting Service Containers in CI (Relying only on Unit Mocks)**:
+   - *Rejected*: Violates the core LinkLite architecture principle. Concurrency guarantees (Postgres unique constraint collision handling and Redis atomic Lua scripts) must be verified on every pull request.
+
+### Trade-offs
+- **Pros**:
+  - Complete end-to-end verification of linting, database migrations, concurrency, and container builds on every PR.
+  - Provides a verifiable CI badge for the repository README.
+- **Cons**:
+  - Requires spinning up Docker service containers in GitHub Actions runners (typically takes ~30–45 seconds).
