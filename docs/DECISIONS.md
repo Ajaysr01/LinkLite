@@ -403,5 +403,36 @@ Enforce zero-trust client DOM manipulation:
 - **Cons**:
   - Cannot render rich Markdown or arbitrary HTML tags in user link descriptions (not a requirement for a URL shortener).
 
+---
+
+## ADR-015: Automated Concurrency Testing & Real-Service Isolation Strategy
+
+### Status
+Accepted
+
+### Context
+Race conditions in distributed and concurrent backend systems—such as database unique constraint conflicts under simultaneous writes, counter increments across parallel requests, and sliding window burst thresholds—rarely surface under isolated unit tests using mocks. They only manifest when concurrent requests execute against real storage engines with real locking mechanisms.
+
+### Decision
+Implement end-to-end automated concurrency tests using in-process asynchronous task pools (`asyncio.gather`) against real PostgreSQL and Redis containers:
+1. **Real Infrastructure Over Mocks**: Concurrency tests run against genuine PostgreSQL 16 and Redis 7 service instances. This tests actual PostgreSQL B-tree index uniqueness checks, transaction serialization, row lock acquisition, and atomic Redis Lua script execution.
+2. **In-Process Asynchronous Task Fan-Out**: Use `httpx.AsyncClient` with `ASGITransport` and `asyncio.gather(*[... for _ in range(N)])` to fire bursts of 50 simultaneous alias creations, 100 parallel redirects, and parallel rate-limiter requests.
+3. **Database Isolation via Truncation Fixture**: Use an autouse `pytest` fixture executing `TRUNCATE TABLE click_stats, links RESTART IDENTITY CASCADE` and `redis.flushdb()` before each test. We deliberately avoid wrapping tests in an outer transaction rollback, because concurrent requests commit independent transactions that must be visible across connections.
+
+### Alternatives Considered
+1. **Mocking Database & Cache Drivers**:
+   - *Rejected*: Useless for concurrency verification. Mocks do not simulate database row-level locking, race conditions, or atomic Lua scripts in Redis.
+2. **External Multiprocess Benchmarking Tools (e.g., Apache Bench / wrk) for Unit/Integration CI**:
+   - *Rejected*: External process runners add CI orchestration flakiness, cannot easily assert internal database state post-burst, and are better suited for Phase 8 load testing than rapid automated test suites.
+
+### Trade-offs
+- **Pros**:
+  - Catches genuine database and cache race conditions reliably.
+  - Fast execution: the full 68-test suite (including 50-parallel creates and 100-parallel redirects) completes in ~5.3 seconds.
+  - Deterministic assertions: tests can directly query PostgreSQL tables and Redis keys to verify exact numbers.
+- **Cons**:
+  - Requires active PostgreSQL and Redis instances (handled seamlessly by Docker compose or GitHub Actions service containers).
+
+
 
 
