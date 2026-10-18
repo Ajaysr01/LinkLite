@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     REDIS_CACHE_TTL_SECONDS: int = 86400
     REDIS_NEGATIVE_CACHE_TTL_SECONDS: int = 60
+    ENABLE_CACHE: bool = True
 
     # Rate limiting (per minute per client IP)
     RATE_LIMIT_CREATE_PER_MINUTE: int = 10

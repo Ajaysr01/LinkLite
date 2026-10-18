@@ -38,41 +38,43 @@ async def redirect_link(
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis_client),
 ) -> RedirectResponse:
-    # 1. Check Redis cache (hot path)
-    cached = await CacheService.get_link(redis, code)
-    if cached:
-        # Check cached expiration if present
-        expires_at_str = cached.get("expires_at")
-        if expires_at_str:
-            expires_at = datetime.fromisoformat(expires_at_str)
-            now = datetime.now(UTC)
-            expiry_utc = expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=UTC)
-            if now >= expiry_utc:
-                await CacheService.delete_link(redis, code)
-                raise HTTPException(
-                    status_code=status.HTTP_410_GONE,
-                    detail="Link has expired",
-                )
+    # 1. Check Redis cache if enabled (hot path)
+    if settings.ENABLE_CACHE:
+        cached = await CacheService.get_link(redis, code)
+        if cached:
+            # Check cached expiration if present
+            expires_at_str = cached.get("expires_at")
+            if expires_at_str:
+                expires_at = datetime.fromisoformat(expires_at_str)
+                now = datetime.now(UTC)
+                expiry_utc = expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=UTC)
+                if now >= expiry_utc:
+                    await CacheService.delete_link(redis, code)
+                    raise HTTPException(
+                        status_code=status.HTTP_410_GONE,
+                        detail="Link has expired",
+                    )
 
-        await AnalyticsService.record_click(redis, code)
-        return RedirectResponse(
-            url=cached["long_url"],
-            status_code=status.HTTP_302_FOUND,
-        )
+            await AnalyticsService.record_click(redis, code)
+            return RedirectResponse(
+                url=cached["long_url"],
+                status_code=status.HTTP_302_FOUND,
+            )
 
-    # 2. Check Negative Cache (prevent cache penetration)
-    if await CacheService.get_negative(redis, code):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Link not found",
-        )
+        # 2. Check Negative Cache (prevent cache penetration)
+        if await CacheService.get_negative(redis, code):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Link not found",
+            )
 
-    # 3. Cache Miss: Query PostgreSQL
+    # 3. Cache Miss (or Cache Disabled): Query PostgreSQL
     link = await LinkService.get_link_raw(db, code)
 
     # Unknown or soft-deleted
     if link is None or link.is_deleted:
-        await CacheService.set_negative(redis, code)
+        if settings.ENABLE_CACHE:
+            await CacheService.set_negative(redis, code)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Link not found",
@@ -85,8 +87,9 @@ async def redirect_link(
             detail="Link has expired",
         )
 
-    # Active link: Populate Redis cache, record click, and redirect
-    await CacheService.set_link(redis, code, link.long_url, link.expires_at)
+    # Active link: Populate Redis cache if enabled, record click, and redirect
+    if settings.ENABLE_CACHE:
+        await CacheService.set_link(redis, code, link.long_url, link.expires_at)
     await AnalyticsService.record_click(redis, code)
     return RedirectResponse(
         url=link.long_url,

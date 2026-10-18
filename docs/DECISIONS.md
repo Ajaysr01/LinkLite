@@ -494,3 +494,34 @@ Implement a GitHub Actions workflow (`.github/workflows/ci.yml`) structured into
   - Provides a verifiable CI badge for the repository README.
 - **Cons**:
   - Requires spinning up Docker service containers in GitHub Actions runners (typically takes ~30–45 seconds).
+
+---
+
+## ADR-018: Runtime Cache Bypass (`ENABLE_CACHE`) and Automated Empirical Load Testing
+
+### Status
+Accepted
+
+### Context
+To scientifically quantify the latency and throughput benefits of the Redis cache-aside tier, engineers must be able to benchmark the service under identical load with caching enabled versus disabled. Additionally, automated headless load testing is required to capture reproducible performance metrics (p50/p95/p99 latency, RPS) for documentation and capacity planning.
+
+### Decision
+1. Add an `ENABLE_CACHE: bool = True` configuration setting to `app/core/config.py`. When set to `False`, the redirect endpoint bypasses Redis cache checks and negative caching, routing 100% of read queries directly to PostgreSQL.
+2. Automate headless load testing via Locust (`benchmarks/locustfile.py` and `benchmarks/run_suite.py`) using `FastHttpUser` to measure:
+   - Cache Enabled vs. Cache Disabled performance.
+   - Rate limit threshold behavior (HTTP 429 latency and `Retry-After` header verification).
+   - Degraded mode performance with the Redis container stopped.
+3. Record raw, unrounded empirical metrics directly into `docs/BENCHMARKS.md`.
+
+### Alternatives Considered
+1. **Mocking Redis Latency Mathematically**:
+   - *Rejected*: Estimating or inventing benchmark figures violates core engineering integrity rules. Empirical load testing under real Docker database loads is mandatory.
+2. **External Benchmarking via curl/bash loops**:
+   - *Rejected*: Incur process creation overhead, lack statistical percentile calculation (p50/p95/p99), and cannot simulate multi-user concurrent traffic accurately.
+
+### Trade-offs
+- **Pros**:
+  - Proves the exact 2.05x throughput improvement and 2.46x latency reduction of Redis cache-aside empirically.
+  - Allows operational operators to temporarily disable caching via environment variables if cache data corruption is suspected.
+- **Cons**:
+  - Adds a conditional branch in the redirect routing path (negligible CPU cycle impact).
