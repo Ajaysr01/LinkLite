@@ -1,4 +1,4 @@
-# LinkLite ⚡
+# LinkLite
 
 [![CI Pipeline](https://github.com/ajaysinghrathore/LinkLite/actions/workflows/ci.yml/badge.svg)](https://github.com/ajaysinghrathore/LinkLite/actions/workflows/ci.yml)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
@@ -7,7 +7,6 @@
 [![Redis](https://img.shields.io/badge/Redis-7-DC382D.svg)](https://redis.io/)
 [![Test Coverage](https://img.shields.io/badge/coverage-87%25-brightgreen.svg)](tests/)
 [![Docker Image](https://img.shields.io/badge/docker%20image-78.5%20MB-blue.svg)](Dockerfile)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **LinkLite** is a high-performance, production-grade URL shortening and analytics platform engineered in Python 3.11 and FastAPI. It delivers sub-millisecond redirect lookups via a Redis cache-aside architecture, guarantees strict concurrency correctness under high write contention using PostgreSQL unique constraints, protects upstream services with an atomic Redis Lua sliding-window rate limiter, and ingests click analytics asynchronously through a write-decoupled in-memory buffer. The project is designed with zero-downtime fault tolerance, degrading gracefully to PostgreSQL with a 0.0% error rate if Redis experiences an outage.
 
@@ -259,7 +258,7 @@ The test suite covers unit, integration, and high-concurrency scenarios against 
 
 ## Empirical Load Testing & Benchmarks
 
-All benchmarks were executed via Locust 2.46.7 headless runner on an **Apple M4 (10 cores, 16 GB RAM)** against real Docker containers. Read the full benchmark documentation in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
+All benchmarks were executed via Locust 2.46.7 headless runner on an **Apple M4 (10 cores, 16 GB RAM)** against real Docker containers.
 
 ```bash
 # Execute automated benchmark suite
@@ -279,33 +278,9 @@ All benchmarks were executed via Locust 2.46.7 headless runner on an **Apple M4 
 
 ---
 
-## Architectural Decision Records (ADRs)
-
-Every major technical and architectural decision is documented following the ADR format in [`docs/DECISIONS.md`](docs/DECISIONS.md):
-
-- [ADR-001: Short Code Generation via Base62 Encoding with Sequence Offset](docs/DECISIONS.md#adr-001-short-code-generation-via-base62-encoding-of-sequential-db-id-with-offset)
-- [ADR-002: HTTP 302 Found vs. HTTP 301 Moved Permanently](docs/DECISIONS.md#adr-002-http-302-found-vs-http-301-moved-permanently-for-redirects)
-- [ADR-003: Redis Cache-Aside with Graceful Fallback (Fail-Open)](docs/DECISIONS.md#adr-003-redis-cache-aside-with-graceful-fallback-fail-open)
-- [ADR-004: Soft Deletion (`is_deleted`) vs. Hard Deletion](docs/DECISIONS.md#adr-004-soft-deletion-is_deleted-vs-hard-deletion-delete-from)
-- [ADR-007: Concurrency Control via Database Unique Constraint](docs/DECISIONS.md#adr-007-concurrency-control-via-database-unique-constraint)
-- [ADR-011: Sliding Window Log Rate Limiter via Atomic Redis Lua Script](docs/DECISIONS.md#adr-011-sliding-window-log-rate-limiter-via-atomic-redis-lua-script)
-- [ADR-013: Write-Decoupled Click Analytics Ingestion & Eventual Consistency](docs/DECISIONS.md#adr-013-write-decoupled-click-analytics-ingestion--eventual-consistency)
-- [ADR-014: Zero-Trust Frontend DOM Manipulation & XSS Prevention](docs/DECISIONS.md#adr-014-zero-trust-frontend-dom-manipulation--xss-prevention)
-- [ADR-015: Automated Concurrency Testing & Real-Service Isolation Strategy](docs/DECISIONS.md#adr-015-automated-concurrency-testing--real-service-isolation-strategy)
-- [ADR-016: Multi-Stage Production Containerization with Non-Root Security](docs/DECISIONS.md#adr-016-multi-stage-production-containerization-with-non-root-security-and-built-in-health-checks)
-- [ADR-018: Runtime Cache Bypass (`ENABLE_CACHE`) & Empirical Load Testing](docs/DECISIONS.md#adr-018-runtime-cache-bypass-enable_cache-and-automated-empirical-load-testing)
-
----
-
 ## Limitations & Future Work
 
 1. **Distributed ID Sharding (Twitter Snowflake)**: For a multi-region, multi-primary database topology, replacing the single PostgreSQL sequence with a distributed 64-bit ID generator (e.g. Snowflake) eliminates the single-primary database bottleneck.
 2. **Counting Bloom Filters for Cache Penetration**: While negative caching protects recently queried non-existent keys for 60s, a Redis-backed Scalable Bloom Filter or Cuckoo Filter could reject unknown short codes in $O(1)$ time with zero database queries.
 3. **Kafka / Redpanda Event Streaming**: At billions of daily redirects, replacing the periodic Redis buffer flush with an asynchronous Apache Kafka event topic enables real-time geographic, user-agent, and referrer analytics processing via Apache Flink or ClickHouse.
 4. **Anycast Edge Redirection**: Terminating TLS and serving Redis reads at the CDN edge (Cloudflare Workers / AWS CloudFront Functions) to reduce global redirection latencies to <10ms worldwide.
-
----
-
-## License
-
-LinkLite is open-source software licensed under the [MIT License](LICENSE).
